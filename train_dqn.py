@@ -16,6 +16,7 @@ from torch.nn import functional as F
 from config import MODEL_DIR, PLOT_DIR
 from maze_env import BallMazeEnv
 from training_plots import save_training_curve
+from training_visualizer import TrainingStatus, TrainingVisualizer
 
 
 class QNetwork(nn.Module):
@@ -76,6 +77,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-path", type=str, default=str(MODEL_DIR / "dqn_ball_maze.pt"))
     parser.add_argument("--plot-path", type=str, default=str(PLOT_DIR / "dqn_training_curve.png"))
     parser.add_argument("--csv-path", type=str, default=str(PLOT_DIR / "dqn_training_log.csv"))
+    parser.add_argument(
+        "--render-training",
+        action="store_true",
+        help="Show a live game view and training curve during training.",
+    )
+    parser.add_argument(
+        "--render-every",
+        type=int,
+        default=1,
+        help="Render every N episodes when --render-training is enabled.",
+    )
+    parser.add_argument(
+        "--render-fps",
+        type=int,
+        default=30,
+        help="Maximum FPS for the live training monitor.",
+    )
     return parser.parse_args()
 
 
@@ -102,72 +120,120 @@ def main() -> None:
     MODEL_DIR.mkdir(exist_ok=True)
     returns: list[float] = []
     epsilons: list[float] = []
+    visualizer = (
+        TrainingVisualizer("dqn", args.episodes, fps=args.render_fps)
+        if args.render_training
+        else None
+    )
 
-    for episode in range(1, args.episodes + 1):
-        state = env.reset(randomize=True)
-        episode_return = 0.0
-        epsilon = epsilon_by_episode(episode, args.episodes)
+    try:
+        for episode in range(1, args.episodes + 1):
+            state = env.reset(randomize=True)
+            episode_return = 0.0
+            epsilon = epsilon_by_episode(episode, args.episodes)
+            last_event = "running"
 
-        for _ in range(env.config.max_steps):
-            if random.random() < epsilon:
-                action = random.randrange(env.discrete_action_dim)
-            else:
-                with torch.no_grad():
-                    q_values = q_net(torch.as_tensor(state, dtype=torch.float32).unsqueeze(0))
-                    action = int(q_values.argmax(dim=1).item())
+            for _ in range(env.config.max_steps):
+                if random.random() < epsilon:
+                    action = random.randrange(env.discrete_action_dim)
+                else:
+                    with torch.no_grad():
+                        q_values = q_net(torch.as_tensor(state, dtype=torch.float32).unsqueeze(0))
+                        action = int(q_values.argmax(dim=1).item())
 
-            result = env.step_discrete(action)
-            replay.push(
-                Transition(
-                    state=state,
-                    action=action,
-                    reward=result.reward,
-                    next_state=result.state,
-                    done=result.done,
+                result = env.step_discrete(action)
+                replay.push(
+                    Transition(
+                        state=state,
+                        action=action,
+                        reward=result.reward,
+                        next_state=result.state,
+                        done=result.done,
+                    )
                 )
-            )
-            state = result.state
-            episode_return += result.reward
+                state = result.state
+                episode_return += result.reward
+                last_event = result.info["event"]
 
-            if len(replay) >= args.batch_size:
-                states, actions, rewards, next_states, dones = replay.sample(args.batch_size)
-                q_values = q_net(states).gather(1, actions)
-                with torch.no_grad():
-                    next_q = target_net(next_states).max(dim=1, keepdim=True).values
-                    targets = rewards + args.gamma * (1.0 - dones) * next_q
-                loss = F.smooth_l1_loss(q_values, targets)
+                if visualizer is not None and episode % max(1, args.render_every) == 0:
+                    best_so_far = max(best_return, episode_return)
+                    keep_rendering = visualizer.update(
+                        env,
+                        returns,
+                        TrainingStatus(
+                            algorithm="dqn",
+                            episode=episode,
+                            total_episodes=args.episodes,
+                            episode_return=episode_return,
+                            best_return=best_so_far,
+                            metric_name="epsilon",
+                            metric_value=epsilon,
+                            event=last_event,
+                        ),
+                    )
+                    if not keep_rendering:
+                        visualizer = None
 
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=10.0)
-                optimizer.step()
+                if len(replay) >= args.batch_size:
+                    states, actions, rewards, next_states, dones = replay.sample(args.batch_size)
+                    q_values = q_net(states).gather(1, actions)
+                    with torch.no_grad():
+                        next_q = target_net(next_states).max(dim=1, keepdim=True).values
+                        targets = rewards + args.gamma * (1.0 - dones) * next_q
+                    loss = F.smooth_l1_loss(q_values, targets)
 
-            if result.done:
-                break
+                    optimizer.zero_grad()
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=10.0)
+                    optimizer.step()
 
-        if episode % args.target_update == 0:
-            target_net.load_state_dict(q_net.state_dict())
+                if result.done:
+                    break
 
-        returns.append(episode_return)
-        epsilons.append(epsilon)
+            if episode % args.target_update == 0:
+                target_net.load_state_dict(q_net.state_dict())
 
-        if episode_return > best_return:
-            best_return = episode_return
-            torch.save(
-                {
-                    "model_state": q_net.state_dict(),
-                    "episode": episode,
-                    "return": episode_return,
-                    "config": vars(args),
-                },
-                args.save_path,
-            )
+            returns.append(episode_return)
+            epsilons.append(epsilon)
 
-        if episode == 1 or episode % 10 == 0:
-            print(
-                f"episode={episode:04d} return={episode_return:8.2f} "
-                f"epsilon={epsilon:.3f} best={best_return:8.2f}"
-            )
+            if episode_return > best_return:
+                best_return = episode_return
+                torch.save(
+                    {
+                        "model_state": q_net.state_dict(),
+                        "episode": episode,
+                        "return": episode_return,
+                        "config": vars(args),
+                    },
+                    args.save_path,
+                )
+
+            if visualizer is not None and episode % max(1, args.render_every) == 0:
+                keep_rendering = visualizer.update(
+                    env,
+                    returns,
+                    TrainingStatus(
+                        algorithm="dqn",
+                        episode=episode,
+                        total_episodes=args.episodes,
+                        episode_return=episode_return,
+                        best_return=best_return,
+                        metric_name="epsilon",
+                        metric_value=epsilon,
+                        event=f"finished: {last_event}",
+                    ),
+                )
+                if not keep_rendering:
+                    visualizer = None
+
+            if episode == 1 or episode % 10 == 0:
+                print(
+                    f"episode={episode:04d} return={episode_return:8.2f} "
+                    f"epsilon={epsilon:.3f} best={best_return:8.2f}"
+                )
+    finally:
+        if visualizer is not None:
+            visualizer.close()
 
     save_training_curve(
         returns=returns,

@@ -16,6 +16,7 @@ from torch.nn import functional as F
 from config import CONFIG, MODEL_DIR, PLOT_DIR
 from maze_env import BallMazeEnv
 from training_plots import save_training_curve
+from training_visualizer import TrainingStatus, TrainingVisualizer
 
 
 class Actor(nn.Module):
@@ -94,6 +95,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-path", type=str, default=str(MODEL_DIR / "ddpg_ball_maze.pt"))
     parser.add_argument("--plot-path", type=str, default=str(PLOT_DIR / "ddpg_training_curve.png"))
     parser.add_argument("--csv-path", type=str, default=str(PLOT_DIR / "ddpg_training_log.csv"))
+    parser.add_argument(
+        "--render-training",
+        action="store_true",
+        help="Show a live game view and training curve during training.",
+    )
+    parser.add_argument(
+        "--render-every",
+        type=int,
+        default=1,
+        help="Render every N episodes when --render-training is enabled.",
+    )
+    parser.add_argument(
+        "--render-fps",
+        type=int,
+        default=30,
+        help="Maximum FPS for the live training monitor.",
+    )
     return parser.parse_args()
 
 
@@ -124,81 +142,129 @@ def main() -> None:
     MODEL_DIR.mkdir(exist_ok=True)
     returns: list[float] = []
     noise_values: list[float] = []
+    visualizer = (
+        TrainingVisualizer("ddpg", args.episodes, fps=args.render_fps)
+        if args.render_training
+        else None
+    )
 
-    for episode in range(1, args.episodes + 1):
-        state = env.reset(randomize=True)
-        episode_return = 0.0
-        noise_scale = args.noise_std * max(0.08, 1.0 - episode / args.episodes)
+    try:
+        for episode in range(1, args.episodes + 1):
+            state = env.reset(randomize=True)
+            episode_return = 0.0
+            noise_scale = args.noise_std * max(0.08, 1.0 - episode / args.episodes)
+            last_event = "running"
 
-        for _ in range(env.config.max_steps):
-            with torch.no_grad():
-                action_norm = actor(
-                    torch.as_tensor(state, dtype=torch.float32).unsqueeze(0)
-                ).squeeze(0).numpy()
-            action_norm += np.random.normal(0.0, noise_scale, size=env.continuous_action_dim)
-            action_norm = np.clip(action_norm, -1.0, 1.0).astype(np.float32)
-            result = env.step_continuous(action_norm * CONFIG.max_tilt_deg)
-
-            replay.push(
-                Transition(
-                    state=state,
-                    action=action_norm,
-                    reward=result.reward,
-                    next_state=result.state,
-                    done=result.done,
-                )
-            )
-            state = result.state
-            episode_return += result.reward
-
-            if len(replay) >= args.batch_size:
-                states, actions, rewards, next_states, dones = replay.sample(args.batch_size)
-
+            for _ in range(env.config.max_steps):
                 with torch.no_grad():
-                    next_actions = actor_target(next_states)
-                    target_q = critic_target(next_states, next_actions)
-                    targets = rewards + args.gamma * (1.0 - dones) * target_q
+                    action_norm = actor(
+                        torch.as_tensor(state, dtype=torch.float32).unsqueeze(0)
+                    ).squeeze(0).numpy()
+                action_norm += np.random.normal(0.0, noise_scale, size=env.continuous_action_dim)
+                action_norm = np.clip(action_norm, -1.0, 1.0).astype(np.float32)
+                result = env.step_continuous(action_norm * CONFIG.max_tilt_deg)
 
-                q_values = critic(states, actions)
-                critic_loss = F.mse_loss(q_values, targets)
-                critic_optimizer.zero_grad()
-                critic_loss.backward()
-                nn.utils.clip_grad_norm_(critic.parameters(), max_norm=10.0)
-                critic_optimizer.step()
+                replay.push(
+                    Transition(
+                        state=state,
+                        action=action_norm,
+                        reward=result.reward,
+                        next_state=result.state,
+                        done=result.done,
+                    )
+                )
+                state = result.state
+                episode_return += result.reward
+                last_event = result.info["event"]
 
-                actor_loss = -critic(states, actor(states)).mean()
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                nn.utils.clip_grad_norm_(actor.parameters(), max_norm=10.0)
-                actor_optimizer.step()
+                if visualizer is not None and episode % max(1, args.render_every) == 0:
+                    best_so_far = max(best_return, episode_return)
+                    keep_rendering = visualizer.update(
+                        env,
+                        returns,
+                        TrainingStatus(
+                            algorithm="ddpg",
+                            episode=episode,
+                            total_episodes=args.episodes,
+                            episode_return=episode_return,
+                            best_return=best_so_far,
+                            metric_name="noise",
+                            metric_value=noise_scale,
+                            event=last_event,
+                        ),
+                    )
+                    if not keep_rendering:
+                        visualizer = None
 
-                soft_update(actor, actor_target, args.tau)
-                soft_update(critic, critic_target, args.tau)
+                if len(replay) >= args.batch_size:
+                    states, actions, rewards, next_states, dones = replay.sample(args.batch_size)
 
-            if result.done:
-                break
+                    with torch.no_grad():
+                        next_actions = actor_target(next_states)
+                        target_q = critic_target(next_states, next_actions)
+                        targets = rewards + args.gamma * (1.0 - dones) * target_q
 
-        returns.append(episode_return)
-        noise_values.append(noise_scale)
+                    q_values = critic(states, actions)
+                    critic_loss = F.mse_loss(q_values, targets)
+                    critic_optimizer.zero_grad()
+                    critic_loss.backward()
+                    nn.utils.clip_grad_norm_(critic.parameters(), max_norm=10.0)
+                    critic_optimizer.step()
 
-        if episode_return > best_return:
-            best_return = episode_return
-            torch.save(
-                {
-                    "actor_state": actor.state_dict(),
-                    "critic_state": critic.state_dict(),
-                    "episode": episode,
-                    "return": episode_return,
-                    "config": vars(args),
-                },
-                args.save_path,
-            )
+                    actor_loss = -critic(states, actor(states)).mean()
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    nn.utils.clip_grad_norm_(actor.parameters(), max_norm=10.0)
+                    actor_optimizer.step()
 
-        if episode == 1 or episode % 10 == 0:
-            print(
-                f"episode={episode:04d} return={episode_return:8.2f} "
-                f"noise={noise_scale:.3f} best={best_return:8.2f}"
-            )
+                    soft_update(actor, actor_target, args.tau)
+                    soft_update(critic, critic_target, args.tau)
+
+                if result.done:
+                    break
+
+            returns.append(episode_return)
+            noise_values.append(noise_scale)
+
+            if episode_return > best_return:
+                best_return = episode_return
+                torch.save(
+                    {
+                        "actor_state": actor.state_dict(),
+                        "critic_state": critic.state_dict(),
+                        "episode": episode,
+                        "return": episode_return,
+                        "config": vars(args),
+                    },
+                    args.save_path,
+                )
+
+            if visualizer is not None and episode % max(1, args.render_every) == 0:
+                keep_rendering = visualizer.update(
+                    env,
+                    returns,
+                    TrainingStatus(
+                        algorithm="ddpg",
+                        episode=episode,
+                        total_episodes=args.episodes,
+                        episode_return=episode_return,
+                        best_return=best_return,
+                        metric_name="noise",
+                        metric_value=noise_scale,
+                        event=f"finished: {last_event}",
+                    ),
+                )
+                if not keep_rendering:
+                    visualizer = None
+
+            if episode == 1 or episode % 10 == 0:
+                print(
+                    f"episode={episode:04d} return={episode_return:8.2f} "
+                    f"noise={noise_scale:.3f} best={best_return:8.2f}"
+                )
+    finally:
+        if visualizer is not None:
+            visualizer.close()
 
     save_training_curve(
         returns=returns,

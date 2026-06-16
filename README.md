@@ -50,6 +50,19 @@ python3 train_dqn.py --episodes 600
 python3 train_ddpg.py --episodes 900
 ```
 
+Show the game view and a live training curve while training:
+
+```bash
+python3 train_dqn.py --episodes 600 --render-training
+python3 train_ddpg.py --episodes 900 --render-training
+```
+
+If rendering slows training too much, render fewer episodes or lower the monitor FPS:
+
+```bash
+python3 train_dqn.py --episodes 600 --render-training --render-every 5 --render-fps 20
+```
+
 The best checkpoints are saved under `models/`.
 Training curves and CSV logs are saved under `plots/`.
 
