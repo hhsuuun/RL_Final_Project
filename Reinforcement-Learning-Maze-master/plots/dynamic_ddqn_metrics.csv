@@ -1,0 +1,2 @@
+agent,episodes,wins,losses,trap_losses,timeout_losses,win_rate,avg_reward,avg_steps
+ddqn,300.0,100.0,200.0,68.0,132.0,0.3333333333333333,-11.69887951769511,43.803333333333335
