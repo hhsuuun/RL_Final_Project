@@ -55,6 +55,8 @@ class Maze:
     penalty_visited = -0.30  # penalty for returning to a cell which was visited earlier
     penalty_impossible_move = -1.00  # penalty for trying to enter an occupied cell or moving out of the maze
     penalty_trap = -20.0  # penalty for stepping into a hole/trap
+    reward_closer_to_exit = 0.05  # small shaping reward for moving closer to the exit
+    penalty_farther_from_exit = -0.05  # small shaping penalty for moving farther from the exit
 
     def __init__(self, maze, start_cell=(0, 0), exit_cell=None):
         """ Create a new maze game.
@@ -185,6 +187,7 @@ class Maze:
         if not possible_actions:
             reward = self.__minimum_reward - 1  # cannot move anywhere, force end of game
         elif action in possible_actions:
+            old_distance = self.__distance_to_exit(self.__current_cell)
             col, row = self.__current_cell
             if action == Action.MOVE_LEFT:
                 col -= 1
@@ -210,11 +213,23 @@ class Maze:
             else:
                 reward = Maze.penalty_move  # penalty for a move which did not result in finding the exit cell
 
+            if self.__current_cell != self.__exit_cell and self.__current_cell not in self.traps:
+                new_distance = self.__distance_to_exit(self.__current_cell)
+                if new_distance < old_distance:
+                    reward += Maze.reward_closer_to_exit
+                elif new_distance > old_distance:
+                    reward += Maze.penalty_farther_from_exit
+
             self.__visited.add(self.__current_cell)
         else:
             reward = Maze.penalty_impossible_move  # penalty for trying to enter an occupied cell or move out of the maze
 
         return reward
+
+    def __distance_to_exit(self, cell):
+        col, row = cell
+        exit_col, exit_row = self.__exit_cell
+        return abs(exit_col - col) + abs(exit_row - row)
 
     def __possible_actions(self, cell=None):
         """ Create a list with all possible actions from 'cell', avoiding the maze's edges and walls.

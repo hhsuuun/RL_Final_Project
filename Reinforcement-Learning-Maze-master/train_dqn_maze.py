@@ -136,6 +136,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-starts", type=int, default=256)
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument(
+        "--reward-scale",
+        type=float,
+        default=20.0,
+        help="Divide rewards by this value for neural-network updates.",
+    )
     parser.add_argument("--epsilon-start", type=float, default=1.0)
     parser.add_argument("--epsilon-end", type=float, default=0.05)
     parser.add_argument("--epsilon-decay", type=float, default=0.992)
@@ -181,13 +187,15 @@ def optimize(
     states, actions, rewards, next_states, dones = replay.sample(batch_size)
     q_values = q_net(states).gather(1, actions)
     with torch.no_grad():
-        next_q_values = target_net(next_states)
-        next_mask = torch.zeros_like(next_q_values, dtype=torch.bool)
+        online_next_q = q_net(next_states)
+        target_next_q = target_net(next_states)
+        next_mask = torch.zeros_like(online_next_q, dtype=torch.bool)
         for row_idx, encoded in enumerate(next_states.numpy()):
             cell = agent.state_from_encoded(encoded)
             next_mask[row_idx, agent.valid_actions(cell)] = True
-        next_q_values = next_q_values.masked_fill(~next_mask, -1e6)
-        next_q = next_q_values.max(dim=1, keepdim=True).values
+        online_next_q = online_next_q.masked_fill(~next_mask, -1e6)
+        best_next_actions = online_next_q.argmax(dim=1, keepdim=True)
+        next_q = target_next_q.gather(1, best_next_actions)
         targets = rewards + gamma * (1.0 - dones) * next_q
 
     loss = F.smooth_l1_loss(q_values, targets)
@@ -216,11 +224,13 @@ def train(args: argparse.Namespace):
     agent = DQNAgent(game, q_net)
 
     epsilon = args.epsilon_start
-    cumulative_reward = 0.0
     reward_history: list[float] = []
     win_history: list[tuple[int, float]] = []
     best_win_rate = 0.0
-    best_state = q_net.state_dict()
+    best_state = {
+        key: value.detach().cpu().clone()
+        for key, value in q_net.state_dict().items()
+    }
     start_list: list[tuple[int, int]] = []
     start_time = datetime.now()
 
@@ -244,17 +254,17 @@ def train(args: argparse.Namespace):
             next_raw_state, reward, status = game.step(action)
             next_state = agent.encode_state(next_raw_state)
             done = status in (Status.WIN, Status.LOSE)
+            scaled_reward = reward / max(args.reward_scale, 1e-6)
             replay.push(
                 Transition(
                     state=state,
                     action=action,
-                    reward=reward,
+                    reward=scaled_reward,
                     next_state=next_state,
                     done=done,
                 )
             )
 
-            cumulative_reward += reward
             episode_reward += reward
 
             if len(replay) >= max(args.batch_size, args.learning_starts):
@@ -278,7 +288,7 @@ def train(args: argparse.Namespace):
             if args.render == "training":
                 game.render_q(agent)
 
-        reward_history.append(cumulative_reward)
+        reward_history.append(episode_reward)
         epsilon = max(args.epsilon_end, epsilon * args.epsilon_decay)
 
         if episode % args.target_update == 0:
@@ -351,7 +361,13 @@ def main() -> None:
     print(f"Final play from {tuple(args.play_start)}: {status.name}")
 
     if args.save_plot is not None:
-        save_training_plot(args.save_plot, agent.name, reward_history, win_history)
+        save_training_plot(
+            args.save_plot,
+            agent.name,
+            reward_history,
+            win_history,
+            cumulative_rewards=False,
+        )
     if args.save_bestmove is not None:
         save_bestmove_plot(args.save_bestmove, agent, MAZE_LAYOUT)
     if args.save_model is not None:

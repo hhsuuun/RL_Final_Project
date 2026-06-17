@@ -124,20 +124,59 @@ def train_model(args: argparse.Namespace, model):
     return model.train(stop_at_convergence=args.stop_at_convergence, **train_kwargs)
 
 
-def save_training_plot(path: Path, model_name: str, reward_history, win_history) -> None:
+def moving_average(values: np.ndarray, window: int) -> np.ndarray:
+    if values.size == 0:
+        return values
+    window = max(1, min(window, values.size))
+    weights = np.ones(window, dtype=np.float32) / window
+    return np.convolve(values, weights, mode="valid")
+
+
+def save_training_plot(
+    path: Path,
+    model_name: str,
+    reward_history,
+    win_history,
+    *,
+    cumulative_rewards: bool = True,
+    average_window: int = 25,
+) -> None:
     import matplotlib.pyplot as plt
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    rewards = np.asarray(reward_history, dtype=np.float32)
+    if cumulative_rewards:
+        episode_returns = np.diff(np.insert(rewards, 0, 0.0))
+    else:
+        episode_returns = rewards
+    episodes = np.arange(1, len(episode_returns) + 1)
+    smoothed = moving_average(episode_returns, average_window)
+
     fig, (ax1, ax2) = plt.subplots(2, 1, tight_layout=True, figsize=(8, 6))
     fig.suptitle(model_name)
-    ax1.plot(reward_history)
+    ax1.plot(episodes, episode_returns, alpha=0.35, linewidth=1.0, label="episode return")
+    if smoothed.size:
+        smooth_episodes = np.arange(average_window, average_window + len(smoothed))
+        if len(episode_returns) < average_window:
+            smooth_episodes = np.arange(1, len(smoothed) + 1)
+        ax1.plot(
+            smooth_episodes,
+            smoothed,
+            linewidth=2.0,
+            label=f"{min(average_window, len(episode_returns))}-episode moving average",
+        )
     ax1.set_xlabel("episode")
-    ax1.set_ylabel("cumulative reward")
+    ax1.set_ylabel("return")
+    ax1.grid(True, alpha=0.25)
+    ax1.legend()
     if win_history:
         ax2.plot(*zip(*win_history))
     ax2.set_xlabel("episode")
     ax2.set_ylabel("win rate")
+    ax2.set_ylim(0.0, 1.05)
+    ax2.grid(True, alpha=0.25)
     fig.savefig(path, dpi=160)
+    plt.close(fig)
     print(f"Saved training plot to {path}")
 
 
