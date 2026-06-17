@@ -1,0 +1,2 @@
+agent,episodes,wins,losses,trap_losses,timeout_losses,win_rate,avg_reward,avg_steps
+qlearning,300.0,102.0,198.0,83.0,115.0,0.34,-10.003455591847766,37.3
