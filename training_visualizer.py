@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import numpy as np
 
@@ -55,6 +56,18 @@ class TrainingVisualizer:
         self.font = pygame.font.SysFont("arial", 24, bold=True)
         self.small_font = pygame.font.SysFont("arial", 16)
         self.tiny_font = pygame.font.SysFont("arial", 13)
+        driver = pygame.display.get_driver()
+        print(
+            f"Live training monitor opened: {self.width}x{self.height}, "
+            f"SDL driver={driver}"
+        )
+        if driver == "dummy":
+            print(
+                "Warning: SDL is using the dummy video driver, so no visible "
+                "window will be shown."
+            )
+        self._draw_startup()
+        pygame.display.flip()
 
     def update(
         self,
@@ -100,6 +113,38 @@ class TrainingVisualizer:
         if self.enabled:
             self.enabled = False
             self.pygame.display.quit()
+
+    def hold(self, seconds: float) -> None:
+        if not self.enabled or seconds <= 0:
+            return
+
+        pygame = self.pygame
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and self.enabled:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.close()
+                    return
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    self.close()
+                    return
+            self.clock.tick(self.fps)
+
+    def _draw_startup(self) -> None:
+        pygame = self.pygame
+        self.screen.fill(self.colors["background"])
+        title = self.font.render(
+            f"{self.algorithm.upper()} Training Monitor",
+            True,
+            self.colors["text"],
+        )
+        detail = self.small_font.render(
+            "Waiting for the first environment step...",
+            True,
+            self.colors["muted"],
+        )
+        self.screen.blit(title, (42, 42))
+        self.screen.blit(detail, (42, 82))
 
     def _draw_plot(self, returns: list[float], status: TrainingStatus) -> None:
         pygame = self.pygame

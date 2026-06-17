@@ -90,6 +90,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--actor-lr", type=float, default=5e-4)
     parser.add_argument("--critic-lr", type=float, default=1e-3)
     parser.add_argument("--buffer-size", type=int, default=120_000)
+    parser.add_argument(
+        "--learning-starts",
+        type=int,
+        default=1_000,
+        help="Collect this many transitions before updating actor and critic.",
+    )
+    parser.add_argument(
+        "--initial-policy",
+        choices=("random", "goal-biased"),
+        default="goal-biased",
+        help="Policy used while filling the replay buffer before learning starts.",
+    )
+    parser.add_argument(
+        "--initial-noise-std",
+        type=float,
+        default=0.25,
+        help="Gaussian noise added to goal-directed initial continuous actions.",
+    )
     parser.add_argument("--noise-std", type=float, default=0.35)
     parser.add_argument("--seed", type=int, default=43)
     parser.add_argument("--save-path", type=str, default=str(MODEL_DIR / "ddpg_ball_maze.pt"))
@@ -112,12 +130,41 @@ def parse_args() -> argparse.Namespace:
         default=30,
         help="Maximum FPS for the live training monitor.",
     )
+    parser.add_argument(
+        "--render-hold-seconds",
+        type=float,
+        default=5.0,
+        help="Keep the live monitor open for N seconds after training.",
+    )
     return parser.parse_args()
 
 
 def soft_update(source: nn.Module, target: nn.Module, tau: float) -> None:
     for source_param, target_param in zip(source.parameters(), target.parameters()):
         target_param.data.copy_(tau * source_param.data + (1.0 - tau) * target_param.data)
+
+
+def initial_continuous_action(env: BallMazeEnv, policy: str, noise_std: float) -> np.ndarray:
+    if policy == "random":
+        return np.random.uniform(
+            -1.0,
+            1.0,
+            size=env.continuous_action_dim,
+        ).astype(np.float32)
+
+    direction = env.goal_pos - env.pos
+    norm = float(np.linalg.norm(direction))
+    if norm < 1e-6:
+        action_norm = np.zeros(env.continuous_action_dim, dtype=np.float32)
+    else:
+        action_norm = (direction / norm).astype(np.float32)
+
+    action_norm += np.random.normal(
+        0.0,
+        max(0.0, noise_std),
+        size=env.continuous_action_dim,
+    )
+    return np.clip(action_norm, -1.0, 1.0).astype(np.float32)
 
 
 def main() -> None:
@@ -156,12 +203,23 @@ def main() -> None:
             last_event = "running"
 
             for _ in range(env.config.max_steps):
-                with torch.no_grad():
-                    action_norm = actor(
-                        torch.as_tensor(state, dtype=torch.float32).unsqueeze(0)
-                    ).squeeze(0).numpy()
-                action_norm += np.random.normal(0.0, noise_scale, size=env.continuous_action_dim)
-                action_norm = np.clip(action_norm, -1.0, 1.0).astype(np.float32)
+                if len(replay) < args.learning_starts:
+                    action_norm = initial_continuous_action(
+                        env,
+                        policy=args.initial_policy,
+                        noise_std=args.initial_noise_std,
+                    )
+                else:
+                    with torch.no_grad():
+                        action_norm = actor(
+                            torch.as_tensor(state, dtype=torch.float32).unsqueeze(0)
+                        ).squeeze(0).numpy()
+                    action_norm += np.random.normal(
+                        0.0,
+                        noise_scale,
+                        size=env.continuous_action_dim,
+                    )
+                    action_norm = np.clip(action_norm, -1.0, 1.0).astype(np.float32)
                 result = env.step_continuous(action_norm * CONFIG.max_tilt_deg)
 
                 replay.push(
@@ -196,7 +254,7 @@ def main() -> None:
                     if not keep_rendering:
                         visualizer = None
 
-                if len(replay) >= args.batch_size:
+                if len(replay) >= max(args.batch_size, args.learning_starts):
                     states, actions, rewards, next_states, dones = replay.sample(args.batch_size)
 
                     with torch.no_grad():
@@ -264,6 +322,7 @@ def main() -> None:
                 )
     finally:
         if visualizer is not None:
+            visualizer.hold(args.render_hold_seconds)
             visualizer.close()
 
     save_training_curve(

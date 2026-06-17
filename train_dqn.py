@@ -72,6 +72,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--buffer-size", type=int, default=80_000)
+    parser.add_argument(
+        "--learning-starts",
+        type=int,
+        default=1_000,
+        help="Collect this many transitions before updating the Q network.",
+    )
+    parser.add_argument(
+        "--initial-policy",
+        choices=("random", "goal-biased"),
+        default="goal-biased",
+        help="Policy used while filling the replay buffer before learning starts.",
+    )
+    parser.add_argument(
+        "--initial-goal-prob",
+        type=float,
+        default=0.35,
+        help="Probability of taking a goal-directed action during initial replay fill.",
+    )
     parser.add_argument("--target-update", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save-path", type=str, default=str(MODEL_DIR / "dqn_ball_maze.pt"))
@@ -94,6 +112,12 @@ def parse_args() -> argparse.Namespace:
         default=30,
         help="Maximum FPS for the live training monitor.",
     )
+    parser.add_argument(
+        "--render-hold-seconds",
+        type=float,
+        default=5.0,
+        help="Keep the live monitor open for N seconds after training.",
+    )
     return parser.parse_args()
 
 
@@ -101,6 +125,24 @@ def epsilon_by_episode(episode: int, total_episodes: int) -> float:
     start, end = 1.0, 0.05
     decay_fraction = min(1.0, episode / max(1, total_episodes * 0.75))
     return end + (start - end) * (1.0 - decay_fraction)
+
+
+def goal_biased_discrete_action(
+    env: BallMazeEnv,
+    goal_probability: float,
+) -> int:
+    if random.random() >= goal_probability:
+        return random.randrange(env.discrete_action_dim)
+
+    delta = env.goal_pos - env.pos
+    preferred_actions: list[int] = []
+    if abs(float(delta[0])) >= 1.0:
+        preferred_actions.append(3 if delta[0] > 0 else 2)
+    if abs(float(delta[1])) >= 1.0:
+        preferred_actions.append(1 if delta[1] > 0 else 0)
+    if not preferred_actions:
+        return 4
+    return random.choice(preferred_actions)
 
 
 def main() -> None:
@@ -134,7 +176,17 @@ def main() -> None:
             last_event = "running"
 
             for _ in range(env.config.max_steps):
-                if random.random() < epsilon:
+                if len(replay) < args.learning_starts:
+                    if args.initial_policy == "goal-biased":
+                        action = goal_biased_discrete_action(
+                            env,
+                            goal_probability=float(
+                                np.clip(args.initial_goal_prob, 0.0, 1.0)
+                            ),
+                        )
+                    else:
+                        action = random.randrange(env.discrete_action_dim)
+                elif random.random() < epsilon:
                     action = random.randrange(env.discrete_action_dim)
                 else:
                     with torch.no_grad():
@@ -174,7 +226,7 @@ def main() -> None:
                     if not keep_rendering:
                         visualizer = None
 
-                if len(replay) >= args.batch_size:
+                if len(replay) >= max(args.batch_size, args.learning_starts):
                     states, actions, rewards, next_states, dones = replay.sample(args.batch_size)
                     q_values = q_net(states).gather(1, actions)
                     with torch.no_grad():
@@ -233,6 +285,7 @@ def main() -> None:
                 )
     finally:
         if visualizer is not None:
+            visualizer.hold(args.render_hold_seconds)
             visualizer.close()
 
     save_training_curve(

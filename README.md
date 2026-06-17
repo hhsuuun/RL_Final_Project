@@ -50,11 +50,26 @@ python3 train_dqn.py --episodes 600
 python3 train_ddpg.py --episodes 900
 ```
 
+Both trainers first fill the replay buffer before updating the networks. During
+that warm-up phase, the default `goal-biased` initial policy mixes exploration
+with actions that roughly move the ball toward the goal.
+
+```bash
+python3 train_dqn.py --episodes 600 --learning-starts 1000 --initial-policy goal-biased --initial-goal-prob 0.35
+python3 train_ddpg.py --episodes 900 --learning-starts 1000 --initial-policy goal-biased --initial-noise-std 0.25
+```
+
 Show the game view and a live training curve while training:
 
 ```bash
 python3 train_dqn.py --episodes 600 --render-training
 python3 train_ddpg.py --episodes 900 --render-training
+```
+
+For a short render test:
+
+```bash
+python3 train_dqn.py --episodes 10 --render-training --render-hold-seconds 10
 ```
 
 If rendering slows training too much, render fewer episodes or lower the monitor FPS:
