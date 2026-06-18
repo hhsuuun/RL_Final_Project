@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import random
 from collections import deque
 from dataclasses import dataclass
@@ -21,7 +22,8 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")
+if os.environ.get("RL_MAZE_LIVE_RENDER") != "1":
+    matplotlib.use("Agg")
 import numpy as np
 import torch
 from torch import nn
