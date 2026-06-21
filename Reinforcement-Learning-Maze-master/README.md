@@ -1,40 +1,412 @@
-### Escape from a maze using reinforcement learning
+# Reinforcement Learning Maze Final Project
 
-##### Solving an optimization problem using an MDP and TD learning
+This project compares reinforcement learning agents in a maze environment with
+walls, traps, reward shaping, fixed maps, and dynamic maps.
 
-The environment for this problem is a maze with walls and a single exit. An agent (the learner and decision maker) is placed somewhere in the maze. The agents' goal is to reach the exit as quickly as possible. To get there the agent moves through the maze in a succession of steps. For every step the agent must decide which action to take. The options are move left, right, up or down. For this purpose the agent is trained; it learns a policy (Q) which tells what is the best next move to make. With every step the agent incurs a penalty or - when finally reaching the exit - a reward. These penalties and rewards are the input when training the policy. 
+The main comparison used in this project is:
 
-![Maze](https://github.com/erikdelange/Reinforcement-Learning-Maze/blob/master/maze.png)
+- Q-learning
+- DDQN
 
-The values for the penalties and rewards are defined in class *Maze* in *maze.py*:
-```python
-    reward_exit = 10.0  # reward for reaching the exit cell
-    penalty_move = -0.05  # penalty for a move which did not result in finding the exit cell
-    penalty_visited = -0.25  # penalty for returning to a cell which was visited earlier
-    penalty_impossible_move = -0.75  # penalty for trying to enter an occupied cell or moving out of the maze
+The demo code shows the learned walking path of each agent in real time.
+
+## Project Goals
+
+The agent starts from a valid cell and tries to reach the exit while avoiding
+walls and traps.
+
+The project includes two maze settings:
+
+1. Fixed maze
+   - The map does not change.
+   - Traps are fixed.
+   - Q-learning and DDQN are compared on the same maze.
+
+2. Dynamic maze
+   - The map/trap/reward can change between rounds.
+   - This is harder than the fixed maze.
+   - Q-learning only observes position, while DDQN observes map information.
+
+## Environment Rules
+
+The maze is defined in `environment/maze.py`.
+
+Cell types:
+
+| Value | Meaning |
+| --- | --- |
+| `0` | empty cell |
+| `1` | wall |
+| `2` | trap / hole |
+| `3` | current agent position for rendering |
+
+Actions:
+
+| Action | Meaning |
+| --- | --- |
+| `0` | move left |
+| `1` | move right |
+| `2` | move up |
+| `3` | move down |
+
+Current reward design:
+
+| Event | Reward |
+| --- | --- |
+| reach exit | `+20.0` |
+| step into trap | `-20.0` |
+| normal move | `-0.05` |
+| revisit cell | `-0.30` |
+| impossible move / wall | `-1.00` |
+| move closer to exit | `+0.05` |
+| move farther from exit | `-0.05` |
+
+The closer/farther reward is reward shaping. It helps the agent learn a useful
+direction without changing the final goal.
+
+## File Overview
+
+| File | Purpose |
+| --- | --- |
+| `environment/maze.py` | Maze environment, rewards, traps, terminal states, rendering |
+| `train_maze.py` | Train tabular models such as Q-learning |
+| `train_dqn_maze.py` | Train neural-network DQN/DDQN-style agent on the fixed maze |
+| `dynamic_maze_compare.py` | Train and compare Q-learning/DDQN in dynamic maze settings |
+| `demo_agents.py` | Evaluate trained fixed-maze agents and save path plots |
+| `dynamic_trap_demo.py` | Demo dynamic trap rounds with live or saved visualization |
+| `showcase_demo.py` | Main presentation demo for Q-learning vs DDQN |
+| `models/` | Saved trained models |
+| `plots/` | Training curves, best-move plots, demo images, CSV results |
+
+## Requirements
+
+Recommended packages:
+
+```bash
+pip install numpy matplotlib torch
 ```
-The policies (or models) used here are based on Sarsa and Q-learning. During training the learning algorithm updates the action-value function Q for each state which is visited. The most preferable action is indicated by the highest value. Updating these values is based on the reward or penalty incurred after the action was taken. With TD-learning a model learns at every step it takes, not only when the exit is reached. However, learning does speed up once the exit has been reached for the first time. 
 
-This project demonstrates different models which learn to move through a maze. Class Maze in file *maze.py* in package *environment* defines the environment including the rules of the game (rewards, penalties). In file *main.py* an example of a maze is defined (but you can create your own) as a np.array. By selecting a value for *test* from enum Test a certain model is trained and can then be used to play a number of games from different starting positions in the maze. When training or playing the agents moves can be plotted by calling Maze.render(Render.MOVES). To also display the progress of training call Maze.render(Render.TRAINING). This visualizes the most preferred action per cell. The higher the value the greener the arrow is displayed.
+If you use Conda:
 
-![Maze](https://github.com/erikdelange/Reinforcement-Learning-Maze/blob/master/bestmove.png)
+```bash
+conda activate new_env
+pip install numpy matplotlib torch
+```
 
-Package *models* contains the following models:
-1. *RandomModel* is the simplest model and just selects the next move randomly. It is [dumb all over](https://www.youtube.com/watch?v=DR_wf92A8E4) and learns nothing. You are lucky if you get to the exit using this model.
-2. *QTableModel* uses a table to record the value of each (state, action) pair. For a state the highest value indicates the most desirable action. These values are constantly refined during training. This is a fast way to learn a policy.
-3. *SarsaTableModel* uses a similar setup as the previous model, but takes less risk during learning (= on-policy learning).
-4. *QTableTraceModel* is an extension of the QTableModel. It speeds up learning by keeping track of previously visited state-action pairs, and updates their values as well although with a decaying rate.
-5. *SarsaTableTraceModel* is a variant of SarsaTableModel but adds an eligibility trace, just as QTableTraceModel. 
-6. *QReplayNetworkModel* is a simple neural network which learns the relation between a state and the corresponding values by replaying previous moves. It is significantly slower than all other models, and an overkill for a problem with such a small state space. As an extra feature after learning it saves the model to disk so this can be loaded later for a next game. This is typically how you would use a neural network in a real world situation where training is separated from actual use. 
+TensorFlow is not required for the current Q-learning/DDQN demos.
 
-The table below gives an impression of the relative performance of each of these models (on my PC):
+## Important: Run From The Project Folder
 
-| Model | Trained | Average no of episodes | Average training time |
-| --- | --- | --- | --- | 
-| QTableModel | 10 times | 149.5 | 16.5 sec |
-| QTableTraceModel | 10 times | 87.0 | 5.2 sec |
-| SarsaTableModel | 10 times | 114.0 | 11.7 sec |
-| SarsaTableTraceModel | 10 times | 73.0 | 5.5 sec |
-| QReplayNetworkModel | 10 times | 113.5 | 4 min 48 sec |
+You can run scripts from inside this folder:
 
-Requires matplotlib, numpy, keras and tensorflow.
+```bash
+cd "Reinforcement-Learning-Maze-master"
+```
+
+Or you can run the file by absolute path. The newer demo scripts automatically
+resolve model paths relative to the script folder.
+
+## Main Live Demo
+
+Use this for presentation.
+
+It shows:
+
+- Fixed maze: 13 rounds
+- Dynamic maze: 13 rounds
+- Q-learning and DDQN side by side
+- Real-time inference path rendering
+
+```bash
+python showcase_demo.py --mode both --rounds 13
+```
+
+If you are running from outside the folder:
+
+```bash
+/Users/iris/anaconda3/envs/new_env/bin/python \
+"/Users/iris/Library/CloudStorage/GoogleDrive-iriscdrive@gmail.com/我的雲端硬碟/NCKU/碩一下/RL/RL_Final_Project/Reinforcement-Learning-Maze-master/showcase_demo.py" \
+--mode both \
+--rounds 13
+```
+
+Only fixed maze:
+
+```bash
+python showcase_demo.py --mode fixed --rounds 13
+```
+
+Only dynamic maze:
+
+```bash
+python showcase_demo.py --mode dynamic --rounds 13
+```
+
+Animation speed controls:
+
+```bash
+python showcase_demo.py \
+  --mode both \
+  --rounds 13 \
+  --live-delay 0.02 \
+  --live-step-stride 5
+```
+
+If the animation is too fast, use a larger `--live-delay` or smaller
+`--live-step-stride`.
+
+If the animation is too slow, use a smaller `--live-delay` or larger
+`--live-step-stride`.
+
+## Expected Demo Behavior
+
+The terminal should print something like:
+
+```text
+Opening live walking-path demo window with matplotlib backend: MacOSX
+```
+
+Then a Matplotlib window opens.
+
+For `--mode both`:
+
+1. The fixed maze demo appears first.
+2. After the 13 fixed rounds finish, close the window.
+3. The dynamic maze demo then appears.
+4. Close the second window when finished.
+
+If the backend says `Agg`, then the current Python environment cannot open an
+interactive GUI window. Try running from Terminal with Conda environment
+activated, or use the `python` from your Conda environment directly.
+
+## Train Fixed-Maze Q-learning
+
+```bash
+python train_maze.py \
+  --model qtable \
+  --episodes 300 \
+  --stop-at-convergence \
+  --render nothing \
+  --save-plot plots/qtable_trap_training_curve.png \
+  --save-bestmove plots/qtable_trap_bestmove.png \
+  --save-model models/qtable_trap_model.pkl
+```
+
+Outputs:
+
+- `models/qtable_trap_model.pkl`
+- `plots/qtable_trap_training_curve.png`
+- `plots/qtable_trap_bestmove.png`
+
+## Train Fixed-Maze DDQN
+
+```bash
+python train_dqn_maze.py \
+  --episodes 1500 \
+  --epsilon-decay 0.996 \
+  --reward-scale 20 \
+  --stop-at-convergence \
+  --render nothing \
+  --save-plot plots/dqn_trap_training_curve.png \
+  --save-bestmove plots/dqn_trap_bestmove.png \
+  --save-model models/dqn_trap_model.pt
+```
+
+Outputs:
+
+- `models/dqn_trap_model.pt`
+- `plots/dqn_trap_training_curve.png`
+- `plots/dqn_trap_bestmove.png`
+
+Note: the file is named `dqn_trap_model.pt`, but the current implementation uses
+Double-DQN style target selection in the update logic.
+
+## Evaluate Fixed-Maze Agents
+
+Evaluate all legal start positions:
+
+```bash
+python demo_agents.py --agent both --episodes 0
+```
+
+Save a path plot:
+
+```bash
+python demo_agents.py \
+  --agent ddqn \
+  --episodes 0 \
+  --save-path-plot plots/ddqn_demo_path.png
+```
+
+## Train Dynamic Maze Agents
+
+Dynamic maze training changes map/trap/reward between episodes.
+
+```bash
+python dynamic_maze_compare.py \
+  --agent both \
+  --episodes 2000 \
+  --eval-episodes 300 \
+  --save-plot plots/dynamic_compare_curve.png \
+  --save-csv plots/dynamic_compare_metrics.csv \
+  --save-q-model models/dynamic_qlearning.pkl \
+  --save-ddqn-model models/dynamic_ddqn.pt
+```
+
+Recommended:
+
+- Q-learning: around `2000` episodes
+- DDQN: around `2000` to `3000` episodes
+
+Dynamic maze is much harder than fixed maze, so short training runs may perform
+poorly.
+
+## Dynamic Trap Demo
+
+This demo changes trap positions every round and compares agents.
+
+```bash
+python dynamic_trap_demo.py \
+  --rounds 10 \
+  --agent both \
+  --live-render
+```
+
+Fast playback:
+
+```bash
+python dynamic_trap_demo.py \
+  --rounds 10 \
+  --agent both \
+  --live-render \
+  --live-delay 0.02 \
+  --live-step-stride 8
+```
+
+Save summary plots instead of live rendering:
+
+```bash
+python dynamic_trap_demo.py \
+  --rounds 10 \
+  --agent both \
+  --save-plot plots/dynamic_trap_10round_demo.png \
+  --save-csv plots/dynamic_trap_10round_demo.csv
+```
+
+## Model Files
+
+Important saved models:
+
+| Model | File |
+| --- | --- |
+| Fixed maze Q-learning | `models/qtable_trap_model.pkl` |
+| Fixed maze DDQN | `models/dqn_trap_model.pt` |
+| Dynamic maze Q-learning | `models/dynamic_qlearning.pkl` |
+| Dynamic maze DDQN | `models/dynamic_ddqn.pt` |
+
+## Plot Files
+
+Important output plots:
+
+| Plot | File |
+| --- | --- |
+| Q-learning training curve | `plots/qtable_trap_training_curve.png` |
+| Q-learning best move | `plots/qtable_trap_bestmove.png` |
+| DDQN training curve | `plots/dqn_trap_training_curve.png` |
+| DDQN best move | `plots/dqn_trap_bestmove.png` |
+| Dynamic comparison curve | `plots/dynamic_compare_curve.png` |
+| Dynamic trap demo | `plots/dynamic_trap_10round_demo.png` |
+
+## Q-learning vs DDQN
+
+Q-learning:
+
+- Uses a Q-table.
+- State is mainly the agent position.
+- Very effective in small fixed mazes.
+- Does not generalize well when trap/map changes.
+
+DDQN:
+
+- Uses a neural network.
+- Uses replay buffer.
+- Uses target network.
+- Uses valid-action masking.
+- Can encode richer state information.
+- More suitable for dynamic map/trap/reward settings.
+
+For the report, a clear comparison is:
+
+| Setting | Expected Result |
+| --- | --- |
+| Fixed maze | Q-learning is fast and stable; DDQN can also learn |
+| Dynamic maze | Q-learning struggles because state is incomplete; DDQN is more suitable |
+
+## Troubleshooting
+
+### `FileNotFoundError: models/qtable_trap_model.pkl`
+
+Run from this folder:
+
+```bash
+cd "Reinforcement-Learning-Maze-master"
+python showcase_demo.py --mode both --rounds 13
+```
+
+The latest `showcase_demo.py` also supports absolute-path execution and resolves
+model paths relative to the script folder.
+
+### No rendering window appears
+
+Make sure you are not using `--no-live-render`.
+
+Run:
+
+```bash
+python showcase_demo.py --mode fixed --rounds 13
+```
+
+The terminal should show a GUI backend such as:
+
+```text
+Opening live walking-path demo window with matplotlib backend: MacOSX
+```
+
+If it shows `Agg`, your environment is non-interactive.
+
+### Round looks frozen
+
+The agent may be taking many steps before timeout.
+
+Use faster playback:
+
+```bash
+python showcase_demo.py \
+  --mode fixed \
+  --rounds 13 \
+  --live-delay 0.02 \
+  --live-step-stride 8
+```
+
+### Dynamic DQN model missing
+
+The current main demo compares Q-learning and DDQN only. It does not show DQN.
+
+## Suggested Presentation Flow
+
+1. Explain the maze rules, traps, and rewards.
+2. Show fixed maze live demo:
+
+```bash
+python showcase_demo.py --mode fixed --rounds 13
+```
+
+3. Show dynamic maze live demo:
+
+```bash
+python showcase_demo.py --mode dynamic --rounds 13
+```
+
+4. Show training curves in `plots/`.
+5. Explain why Q-learning works well in fixed maze but DDQN is more suitable for
+   dynamic settings.
