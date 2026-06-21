@@ -1,4 +1,4 @@
-"""Live showcase demo for Q-learning, DQN, and DDQN agents.
+"""Live showcase demo for Q-learning and DDQN agents.
 
 Run this script when you need to demonstrate the agents walking through the maze.
 It can show both the fixed trap maze and dynamic mazes where walls, traps, and
@@ -78,20 +78,34 @@ def parse_args() -> argparse.Namespace:
         default="both",
         help="Which demo to show.",
     )
-    parser.add_argument("--rounds", type=int, default=5)
+    parser.add_argument("--rounds", type=int, default=13)
     parser.add_argument("--max-steps", type=int, default=180)
     parser.add_argument("--seed", type=int, default=21)
-    parser.add_argument("--live-render", dest="live_render", action="store_true", default=True)
+    parser.add_argument(
+        "--live-render", dest="live_render", action="store_true", default=True
+    )
     parser.add_argument("--no-live-render", dest="live_render", action="store_false")
     parser.add_argument("--live-delay", type=float, default=0.04)
     parser.add_argument("--live-step-stride", type=int, default=3)
     parser.add_argument("--round-pause", type=float, default=0.80)
-    parser.add_argument("--fixed-q-model", type=Path, default=Path("models/qtable_trap_model.pkl"))
-    parser.add_argument("--fixed-dqn-model", type=Path, default=Path("models/dqn_test_model.pt"))
-    parser.add_argument("--fixed-ddqn-model", type=Path, default=Path("models/dqn_trap_model.pt"))
-    parser.add_argument("--dynamic-q-model", type=Path, default=Path("models/dynamic_qlearning.pkl"))
-    parser.add_argument("--dynamic-dqn-model", type=Path, default=Path("models/dynamic_dqn.pt"))
-    parser.add_argument("--dynamic-ddqn-model", type=Path, default=Path("models/dynamic_ddqn.pt"))
+    parser.add_argument(
+        "--fixed-q-model", type=Path, default=Path("models/qtable_trap_model.pkl")
+    )
+    parser.add_argument(
+        "--fixed-dqn-model", type=Path, default=Path("models/dqn_test_model.pt")
+    )
+    parser.add_argument(
+        "--fixed-ddqn-model", type=Path, default=Path("models/dqn_trap_model.pt")
+    )
+    parser.add_argument(
+        "--dynamic-q-model", type=Path, default=Path("models/dynamic_qlearning.pkl")
+    )
+    parser.add_argument(
+        "--dynamic-dqn-model", type=Path, default=Path("models/dynamic_dqn.pt")
+    )
+    parser.add_argument(
+        "--dynamic-ddqn-model", type=Path, default=Path("models/dynamic_ddqn.pt")
+    )
     parser.add_argument("--size", type=int, default=8)
     parser.add_argument("--wall-prob", type=float, default=0.18)
     parser.add_argument("--trap-prob", type=float, default=0.10)
@@ -165,25 +179,14 @@ def load_fixed_agents(args: argparse.Namespace) -> dict[str, object]:
     q_agent.environment = Maze(MAZE_LAYOUT)
     return {
         "Q-learning": q_agent,
-        "DQN": load_fixed_dqn_agent(args.fixed_dqn_model, "DQN"),
         "DDQN": load_fixed_dqn_agent(args.fixed_ddqn_model, "DDQN"),
     }
 
 
 def load_dynamic_agents(args: argparse.Namespace) -> dict[str, object]:
     q_agent = load_pickle_model(args.dynamic_q_model)
-    dqn_path = args.dynamic_dqn_model
-    dqn_label = "DQN"
-    if not dqn_path.exists():
-        dqn_path = args.dynamic_ddqn_model
-        dqn_label = "DQN fallback"
-        print(
-            "Note: models/dynamic_dqn.pt was not found; "
-            "using models/dynamic_ddqn.pt for the DQN display column."
-        )
     return {
         "Q-learning": q_agent,
-        dqn_label: load_dynamic_deep_agent(dqn_path, dqn_label),
         "DDQN": load_dynamic_deep_agent(args.dynamic_ddqn_model, "DDQN"),
     }
 
@@ -200,7 +203,10 @@ def fixed_rounds(count: int) -> list[RoundSpec]:
     preferred = [(4, 1), (0, 0), (2, 4), (6, 0), (0, 7)]
     ordered = [cell for cell in preferred if cell in starts]
     ordered += [cell for cell in starts if cell not in ordered]
-    return [RoundSpec(MAZE_LAYOUT.copy(), ordered[idx % len(ordered)]) for idx in range(count)]
+    return [
+        RoundSpec(MAZE_LAYOUT.copy(), ordered[idx % len(ordered)])
+        for idx in range(count)
+    ]
 
 
 def dynamic_rounds(args: argparse.Namespace) -> list[RoundSpec]:
@@ -255,7 +261,9 @@ def step_agent(mode: str, label: str, agent, spec: RoundSpec, live: LiveState) -
     if status in (Status.WIN, Status.LOSE):
         live.done = True
         col, row = next_cell
-        live.ended_in_trap = status == Status.LOSE and spec.layout[row, col] == Cell.TRAP
+        live.ended_in_trap = (
+            status == Status.LOSE and spec.layout[row, col] == Cell.TRAP
+        )
 
 
 def setup_axis(ax, spec: RoundSpec, title: str):
@@ -273,11 +281,21 @@ def setup_axis(ax, spec: RoundSpec, title: str):
     ax.plot(*exit_cell, "gs", markersize=18)
     ax.text(*exit_cell, "Exit", ha="center", va="center", color="white", fontsize=8)
     ax.plot(*spec.start_cell, "rs", markersize=18)
-    ax.text(*spec.start_cell, "Start", ha="center", va="center", color="white", fontsize=7)
+    ax.text(
+        *spec.start_cell, "Start", ha="center", va="center", color="white", fontsize=7
+    )
     for row in range(spec.layout.shape[0]):
         for col in range(spec.layout.shape[1]):
             if spec.layout[row, col] == Cell.TRAP:
-                ax.text(col, row, "Trap", ha="center", va="center", color="white", fontsize=7)
+                ax.text(
+                    col,
+                    row,
+                    "Trap",
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontsize=7,
+                )
     line = ax.plot([], [], "o-", linewidth=2.0, markersize=5)[0]
     head = ax.plot([], [], "o", color="#cc79a7", markersize=12)[0]
     return line, head
@@ -305,12 +323,12 @@ def run_live_section(
 ) -> None:
     colors = {
         "Q-learning": "#0072b2",
-        "DQN": "#e69f00",
-        "DQN fallback": "#e69f00",
         "DDQN": "#cc79a7",
     }
     labels = list(agents.keys())
-    fig, axes = plt.subplots(1, len(labels), figsize=(5.4 * len(labels), 5.5), tight_layout=True)
+    fig, axes = plt.subplots(
+        1, len(labels), figsize=(5.4 * len(labels), 5.5), tight_layout=True
+    )
     axes = np.atleast_1d(axes)
     if hasattr(fig.canvas, "manager"):
         fig.canvas.manager.set_window_title(title)
@@ -320,7 +338,9 @@ def run_live_section(
         lines = {}
         heads = {}
         for ax, label in zip(axes, labels):
-            line, head = setup_axis(ax, spec, f"{title} | Round {round_idx}/{len(rounds)}\n{label}")
+            line, head = setup_axis(
+                ax, spec, f"{title} | Round {round_idx}/{len(rounds)}\n{label}"
+            )
             line.set_color(colors.get(label, "#0072b2"))
             lines[label] = line
             heads[label] = head
@@ -382,7 +402,9 @@ def main() -> None:
     if not args.live_render:
         print("Live render is disabled because --no-live-render was used.")
     else:
-        print(f"Opening live walking-path demo window with matplotlib backend: {matplotlib.get_backend()}")
+        print(
+            f"Opening live walking-path demo window with matplotlib backend: {matplotlib.get_backend()}"
+        )
 
     if args.mode in ("fixed", "both"):
         run_live_section(
